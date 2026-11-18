@@ -78,7 +78,9 @@ def test_zscore_per_subject_centres_each_subject():
         np.testing.assert_allclose(block.mean(axis=0), 0.0, atol=1e-9)
         np.testing.assert_allclose(block.std(axis=0), 1.0, atol=1e-9)
     # Different offsets disappear once each subject is standardised.
-    np.testing.assert_allclose(scaled[subjects == 0].mean(axis=0), scaled[subjects == 1].mean(0))
+    np.testing.assert_allclose(
+        scaled[subjects == 0].mean(axis=0), scaled[subjects == 1].mean(axis=0), atol=1e-9
+    )
 
 
 def test_zscore_per_subject_tolerates_constant_columns():
