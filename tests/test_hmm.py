@@ -133,6 +133,55 @@ def test_single_observation_sequence():
     np.testing.assert_allclose(log_likelihood, expected, atol=1e-12)
 
 
+def path_log_probability(model: hmm.GaussianHMM, data: np.ndarray, path) -> float:
+    """Joint log probability of one state sequence."""
+    emit = model.log_emission(data)
+    score = np.log(model.startprob_)[path[0]] + emit[0, path[0]]
+    for step in range(1, len(path)):
+        score += np.log(model.transmat_)[path[step - 1], path[step]] + emit[step, path[step]]
+    return score
+
+
+def test_viterbi_matches_brute_force_best_path():
+    model = toy_model()
+    data = observations(4)
+    path, log_probability = model.viterbi(data)
+    _, best_score, best_path = brute_force(model, data)
+
+    assert tuple(int(state) for state in path) == best_path
+    np.testing.assert_allclose(log_probability, best_score, atol=1e-10)
+    np.testing.assert_allclose(path_log_probability(model, data, path), log_probability, atol=1e-10)
+
+
+def test_viterbi_matches_brute_force_with_three_states():
+    model = hmm.GaussianHMM(n_components=3)
+    model.set_params(
+        startprob=np.array([0.5, 0.3, 0.2]),
+        transmat=np.array([[0.8, 0.1, 0.1], [0.2, 0.6, 0.2], [0.1, 0.3, 0.6]]),
+        means=np.array([[-1.0], [0.0], [1.5]]),
+        covars=np.array([[[0.4]], [[1.2]], [[0.7]]]),
+    )
+    data = observations(3, seed=4)
+
+    path, log_probability = model.viterbi(data)
+    _, best_score, best_path = brute_force(model, data)
+
+    assert tuple(int(state) for state in path) == best_path
+    np.testing.assert_allclose(log_probability, best_score, atol=1e-10)
+
+
+def test_viterbi_handles_single_observation():
+    model = toy_model()
+    data = observations(1)
+
+    path, log_probability = model.viterbi(data)
+
+    assert path.shape == (1,)
+    best_state = int(np.argmax(np.log(model.startprob_) + model.log_emission(data)[0]))
+    assert int(path[0]) == best_state
+    np.testing.assert_allclose(log_probability, path_log_probability(model, data, path), atol=1e-12)
+
+
 def test_emission_log_probabilities_match_scipy():
     model = toy_model()
     data = observations()
