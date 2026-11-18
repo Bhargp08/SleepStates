@@ -1,0 +1,42 @@
+[project]
+name = "sleepstates"
+version = "0.0.1"
+description = "Unsupervised sleep staging with a hand-written Gaussian HMM on Sleep-EDF Expanded EEG."
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "numpy",
+    "scipy",
+    "scikit-learn",
+    "mne",
+    "matplotlib",
+    "hmmlearn",
+    "pandas",
+    "yasa",
+    "plotly",
+    # numba/llvmlite >0.62 dropped cp310 wheels; cap so `uv sync` never builds from source.
+    "numba>=0.61,<0.63",
+]
+
+[dependency-groups]
+dev = [
+    "pytest",
+    "ruff",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["sleepstates"]
+
+[tool.ruff]
+target-version = "py310"
+line-length = 100
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+filterwarnings = [
+    "ignore::DeprecationWarning",
+]
