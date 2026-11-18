@@ -121,6 +121,114 @@ def plot_dwell_times(table, path=None):
     return _save(figure, path)
 
 
+def build_hypnogram_figure(states, labels, subjects, stages=("W", "N1", "N2", "N3", "REM"), mapping=None):
+    """Interactive Plotly figure: expert and machine hypnograms, one dropdown entry per subject."""
+    from plotly.graph_objects import Scatter
+    from plotly.subplots import make_subplots
+
+    from sleepstates.evaluate import apply_mapping, confusion_counts, majority_mapping
+
+    states = np.asarray(states, dtype=int)
+    labels = np.asarray(labels, dtype=str)
+    subjects = np.asarray(subjects)
+
+    if mapping is None:
+        mapping = majority_mapping(confusion_counts(states, labels, stages), stages)
+    machine = apply_mapping(states, mapping)
+    ranks = {stage: index for index, stage in enumerate(stages)}
+
+    figure = make_subplots(
+        rows=2,
+        cols=1,
+        shared_xaxes=True,
+        subplot_titles=("expert (AASM)", "machine (HMM Viterbi)"),
+    )
+
+    unique_subjects = np.unique(subjects)
+    total_traces = 2 * len(unique_subjects)
+    buttons = []
+
+    for index, subject in enumerate(unique_subjects):
+        mask = subjects == subject
+        hours = np.arange(int(mask.sum())) * 30.0 / 3600.0
+        expert_ranks = [ranks.get(stage, np.nan) for stage in labels[mask]]
+        machine_ranks = [ranks.get(stage, np.nan) for stage in machine[mask]]
+        show = index == 0
+
+        figure.add_trace(
+            Scatter(
+                x=hours,
+                y=expert_ranks,
+                mode="lines",
+                name=f"expert · subject {int(subject):02d}",
+                visible=show,
+                line={"color": "#1f77b4", "width": 1.5},
+            ),
+            row=1,
+            col=1,
+        )
+        figure.add_trace(
+            Scatter(
+                x=hours,
+                y=machine_ranks,
+                mode="lines",
+                name=f"machine · subject {int(subject):02d}",
+                visible=show,
+                line={"color": "#d62728", "width": 1.5},
+            ),
+            row=2,
+            col=1,
+        )
+
+        visibility = [False] * total_traces
+        visibility[2 * index] = True
+        visibility[2 * index + 1] = True
+        buttons.append(
+            {
+                "label": f"subject {int(subject):02d}",
+                "method": "update",
+                "args": [
+                    {"visible": visibility},
+                    {"title.text": f"subject {int(subject):02d}"},
+                ],
+            }
+        )
+
+    figure.update_layout(
+        title={"text": f"subject {int(unique_subjects[0]):02d}" if len(unique_subjects) else ""},
+        height=620,
+        template="plotly_white",
+        updatemenus=[
+            {
+                "buttons": buttons,
+                "direction": "down",
+                "x": 1.02,
+                "y": 1.15,
+                "showactive": True,
+            }
+        ],
+    )
+    for row in (1, 2):
+        figure.update_yaxes(
+            tickvals=list(range(len(stages))),
+            ticktext=list(stages),
+            range=[len(stages) - 0.5, -0.5],
+            title_text="stage",
+            row=row,
+            col=1,
+        )
+    figure.update_xaxes(title_text="hours from recording start", row=2, col=1)
+    return figure
+
+
+def write_hypnogram_html(figure, path) -> Path:
+    """Write the interactive figure to a self-contained HTML file."""
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    figure.write_html(str(path), include_plotlyjs=True)
+    return path
+
+
 def plot_age_comparison(result, path=None):
     """Per-subject transition rate and mean dwell, split by age group."""
     frame = result["subjects"]
