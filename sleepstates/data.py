@@ -187,6 +187,11 @@ def load_subject(path) -> dict:
     }
 
 
+def load_epoch_dir(directory) -> list[dict]:
+    """Load every cached subject .npz in a directory, sorted by filename."""
+    return [load_subject(path) for path in sorted(Path(directory).glob("*.npz"))]
+
+
 def load_subject_table(path) -> pd.DataFrame:
     """Load the Sleep-EDF subject table (SC-subjects.xls or a csv copy)."""
     path = Path(path)
