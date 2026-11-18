@@ -72,3 +72,72 @@ def plot_confusion_matrix(confusion, stages=("W", "N1", "N2", "N3", "REM"), path
 
     figure.tight_layout()
     return _save(figure, path)
+
+
+def plot_transition_matrix(transmat, state_labels=None, path=None):
+    """Heatmap of the state-to-state transition matrix."""
+    matrix = np.asarray(transmat, dtype=float)
+    labels = state_labels or [f"state {index}" for index in range(len(matrix))]
+
+    figure, axis = plt.subplots(figsize=(6, 5))
+    image = axis.imshow(matrix, cmap="magma", vmin=0.0, vmax=max(matrix.max(), 1e-9))
+    axis.set_xticks(range(len(labels)), labels, rotation=45, ha="right")
+    axis.set_yticks(range(len(labels)), labels)
+    axis.set_xlabel("to")
+    axis.set_ylabel("from")
+    axis.set_title("State transition probabilities")
+    figure.colorbar(image, ax=axis, label="p(transition)")
+
+    peak = max(matrix.max(), 1e-9)
+    for row in range(len(matrix)):
+        for column in range(len(matrix)):
+            axis.text(
+                column,
+                row,
+                f"{matrix[row, column]:.2f}",
+                ha="center",
+                va="center",
+                color="white" if matrix[row, column] < 0.5 * peak else "black",
+            )
+
+    figure.tight_layout()
+    return _save(figure, path)
+
+
+def plot_dwell_times(table, path=None):
+    """Expected versus empirical dwell time for each state."""
+    positions = np.arange(len(table))
+    width = 0.4
+
+    figure, axis = plt.subplots(figsize=(7, 4))
+    axis.bar(positions - width / 2, table["expected"], width, label="expected 1/(1-a_ii)")
+    axis.bar(positions + width / 2, table["empirical"], width, label="empirical (Viterbi)")
+    axis.set_xticks(positions, [f"state {state}" for state in table["state"]])
+    axis.set_ylabel("epochs per run")
+    axis.set_title("Dwell times: model versus data")
+    axis.legend()
+
+    figure.tight_layout()
+    return _save(figure, path)
+
+
+def plot_age_comparison(result, path=None):
+    """Per-subject transition rate and mean dwell, split by age group."""
+    frame = result["subjects"]
+
+    figure, axes = plt.subplots(1, 2, figsize=(9, 4))
+    for axis, column, label in (
+        (axes[0], "transition_rate", "transitions / epoch"),
+        (axes[1], "mean_dwell", "mean dwell (epochs)"),
+    ):
+        groups = [
+            frame.loc[frame["group"] == group, column].to_numpy(dtype=float)
+            for group in ("younger", "older")
+        ]
+        axis.boxplot(groups, widths=0.5)
+        axis.set_xticks([1, 2], ["younger", "older"])
+        axis.set_ylabel(label)
+        axis.set_title(f"{label} by age group")
+
+    figure.tight_layout()
+    return _save(figure, path)
