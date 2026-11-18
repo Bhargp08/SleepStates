@@ -41,14 +41,48 @@ def test_gmm_recovers_two_cluster_means():
 
 
 def test_gmm_log_likelihood_never_decreases():
-    features, _ = _two_clusters(n=120)
-    model = gmm.GMM(n_components=2, random_state=0, n_init=1, max_iter=40).fit(features)
+    # Overlapping clusters keep EM iterating instead of converging on iteration 1.
+    rng = np.random.default_rng(1)
+    features = np.vstack(
+        [
+            rng.normal([-1.0, 0.0], 1.5, size=(150, 2)),
+            rng.normal([1.0, 0.5], 1.5, size=(150, 2)),
+        ]
+    )
+    model = gmm.GMM(n_components=3, random_state=1, n_init=1, max_iter=40).fit(features)
 
     history = np.asarray(model.history_)
-    assert len(history) > 2
+    assert len(history) > 5
     # EM is monotone; allow only floating-point noise between iterations.
     assert np.all(np.diff(history) >= -1e-6)
     assert model.log_likelihood_ == pytest.approx(history[-1], rel=1e-9)
+
+
+def test_gmm_log_likelihood_matches_an_independent_density():
+    features, _ = _two_clusters(n=80)
+    model = gmm.GMM(n_components=2, random_state=0, n_init=1).fit(features)
+
+    # Mixture density computed straight from scipy, with no shared code path.
+    densities = sum(
+        model.weights_[index]
+        * multivariate_normal(model.means_[index], model.covariances_[index]).pdf(features)
+        for index in range(model.n_components)
+    )
+
+    np.testing.assert_allclose(model.log_likelihood_, np.log(densities).sum(), rtol=1e-8)
+    np.testing.assert_allclose(model.total_log_likelihood(features), model.log_likelihood_, rtol=1e-9)
+    assert model.log_likelihood_ < 0.0  # a density below 1 over 160 points
+
+
+def test_gmm_restarts_keep_the_best_solution():
+    features, _ = _two_clusters(n=60)
+
+    multi = gmm.GMM(n_components=4, n_init=3, random_state=0).fit(features)
+    single = gmm.GMM(n_components=4, n_init=1, random_state=0).fit(features)
+
+    # The first restart is the single-run solution, so the best run is at least as good.
+    assert multi.log_likelihood_ >= single.log_likelihood_ - 1e-9
+    assert single.log_likelihood_ < 0.0
 
 
 def test_gmm_predictions_match_the_generating_clusters():
