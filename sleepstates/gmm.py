@@ -105,8 +105,10 @@ class GMM:
         return self._m_step(points, resp)
 
     # -- EM -------------------------------------------------------------
-    def _log_resp(self, points) -> np.ndarray:
-        weighted = np.column_stack(
+    def _log_joint(self, points) -> np.ndarray:
+        """(n, K) log of weight times density, i.e. log p(x_n, z_n = k)."""
+        points = np.asarray(points, dtype=float)
+        return np.column_stack(
             [
                 np.log(max(weight, 1e-300)) + log_gaussian(points, mean, cov)
                 for weight, mean, cov in zip(
@@ -114,7 +116,11 @@ class GMM:
                 )
             ]
         )
-        return weighted - logsumexp(weighted, axis=1, keepdims=True)
+
+    def _log_resp(self, points) -> np.ndarray:
+        """(n, K) log responsibilities; rows sum to 1 in probability space."""
+        joint = self._log_joint(points)
+        return joint - logsumexp(joint, axis=1, keepdims=True)
 
     def _m_step(self, points, resp: np.ndarray):
         counts = resp.sum(axis=0) + 1e-10
@@ -142,8 +148,11 @@ class GMM:
             history: list[float] = []
             previous = None
             for _ in range(self.max_iter):
-                log_resp = self._log_resp(points)
-                log_likelihood = float(logsumexp(log_resp, axis=1).sum())
+                joint = self._log_joint(points)
+                # Normalise before the M-step, but score before normalising:
+                # normalised rows always have logsumexp() == 0.
+                log_resp = joint - logsumexp(joint, axis=1, keepdims=True)
+                log_likelihood = float(logsumexp(joint, axis=1).sum())
                 history.append(log_likelihood)
                 self._set_params(*self._m_step(points, np.exp(log_resp)))
                 if previous is not None and abs(log_likelihood - previous) <= self.tol * abs(
@@ -173,7 +182,7 @@ class GMM:
 
     def total_log_likelihood(self, points) -> float:
         """Sum of log densities over samples."""
-        return float(logsumexp(self._log_resp(np.asarray(points, dtype=float)), axis=1).sum())
+        return float(logsumexp(self._log_joint(points), axis=1).sum())
 
     def score(self, points) -> float:
         """Mean log likelihood per sample."""
@@ -182,5 +191,4 @@ class GMM:
 
     def score_samples(self, points) -> np.ndarray:
         """Per-sample log likelihood."""
-        points = np.asarray(points, dtype=float)
-        return logsumexp(self._log_resp(points), axis=1)
+        return logsumexp(self._log_joint(points), axis=1)
