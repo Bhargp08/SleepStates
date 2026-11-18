@@ -8,6 +8,18 @@ Unsupervised sleep staging with a hand-written Gaussian HMM on Sleep-EDF Expande
 uv sync
 ```
 
+## Data
+
+Sleep-EDF Expanded (PhysioNet sleep-cassette) is downloaded on demand and cached outside git.
+The command below fetches 20 subjects for night 1, cuts 30 s epochs of Fpz-Cz EEG, merges
+R&K stages 3/4 into N3, drops movement/unscored epochs and trims wake to 30 min at either end:
+
+```bash
+uv run python scripts/download.py --subjects 0-19 --night 1
+```
+
+Epochs are written to `data/epochs/sub-XX_night1.npz` (`data/` and `*.edf` are git-ignored).
+
 ## Tests
 
 ```bash
