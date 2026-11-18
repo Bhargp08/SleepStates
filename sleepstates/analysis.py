@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import itertools
+
 import numpy as np
 import pandas as pd
+from scipy.stats import mannwhitneyu
 
 from sleepstates import gmm, hmm
 
@@ -136,3 +139,153 @@ def best_k_by_bic(table: pd.DataFrame) -> int:
 def best_k_by_heldout(table: pd.DataFrame) -> int:
     """K with the highest held-out log likelihood per epoch."""
     return int(table.loc[table["heldout_loglik_per_epoch"].idxmax(), "k"])
+
+
+# -- transition structure and dwell times (SS-10) ------------------------
+def transition_counts(states, n_states: int | None = None) -> np.ndarray:
+    """Count state-to-state transitions within one hypnogram."""
+    states = np.asarray(states, dtype=int)
+    n_states = n_states or (int(states.max()) + 1 if states.size else 0)
+    counts = np.zeros((n_states, n_states), dtype=int)
+    for previous, current in itertools.pairwise(states):
+        counts[previous, current] += 1
+    return counts
+
+
+def transition_matrix_from_states(states, n_states: int | None = None) -> np.ndarray:
+    """Row-normalised empirical transition matrix (empty rows become uniform)."""
+    counts = transition_counts(states, n_states).astype(float)
+    row_sums = counts.sum(axis=1, keepdims=True)
+    return np.divide(
+        counts,
+        row_sums,
+        out=np.full_like(counts, 1.0 / counts.shape[0]),
+        where=row_sums > 0,
+    )
+
+
+def stationary_distribution(transmat) -> np.ndarray:
+    """Left eigenvector of the transition matrix for eigenvalue 1."""
+    transmat = np.asarray(transmat, dtype=float)
+    eigenvalues, eigenvectors = np.linalg.eig(transmat.T)
+    index = int(np.argmin(np.abs(eigenvalues - 1.0)))
+    stationary = np.abs(np.real(eigenvectors[:, index]))
+    return stationary / stationary.sum()
+
+
+def expected_dwell(transmat) -> np.ndarray:
+    """Expected run length per state: 1 / (1 - a_ii)."""
+    diagonal = np.diag(np.asarray(transmat, dtype=float))
+    return 1.0 / np.maximum(1.0 - diagonal, 1e-12)
+
+
+def run_lengths(states) -> tuple[np.ndarray, np.ndarray]:
+    """Return (state id, run length) for every run of identical states."""
+    states = np.asarray(states, dtype=int)
+    if states.size == 0:
+        return np.array([], dtype=int), np.array([], dtype=int)
+    changes = np.flatnonzero(np.diff(states)) + 1
+    starts = np.concatenate([[0], changes])
+    ends = np.concatenate([changes, [len(states)]])
+    return states[starts], ends - starts
+
+
+def empirical_dwell(states, n_states: int | None = None) -> np.ndarray:
+    """Mean observed run length per state (nan for states that never occur)."""
+    states = np.asarray(states, dtype=int)
+    n_states = n_states or (int(states.max()) + 1 if states.size else 0)
+    ids, lengths = run_lengths(states)
+    dwell = np.full(n_states, np.nan)
+    for state in range(n_states):
+        mask = ids == state
+        if mask.any():
+            dwell[state] = lengths[mask].mean()
+    return dwell
+
+
+def dwell_table(transmat, states) -> pd.DataFrame:
+    """Expected (from the model) versus empirical (from Viterbi) dwell times."""
+    return pd.DataFrame(
+        {
+            "state": np.arange(len(transmat)),
+            "expected": expected_dwell(transmat),
+            "empirical": empirical_dwell(states, n_states=len(transmat)),
+        }
+    )
+
+
+# -- per-subject summaries and age comparison ----------------------------
+def subject_metrics(states, subjects) -> pd.DataFrame:
+    """Per-subject epoch count, transitions, transition rate and mean dwell."""
+    states = np.asarray(states, dtype=int)
+    subjects = np.asarray(subjects)
+    rows = []
+    for subject in np.unique(subjects):
+        block = states[subjects == subject]
+        transitions = int((np.diff(block) != 0).sum())
+        rows.append(
+            {
+                "subject": int(subject),
+                "n_epochs": len(block),
+                "transitions": transitions,
+                "transition_rate": transitions / max(len(block) - 1, 1),
+                "mean_dwell": len(block) / (transitions + 1),
+            }
+        )
+    return pd.DataFrame(rows)
+
+
+def per_subject_ages(subjects, ages) -> dict[int, float]:
+    """Map subject id to age, accepting per-epoch or per-subject age arrays."""
+    subjects = np.asarray(subjects)
+    ages = np.asarray(ages, dtype=float)
+    unique = np.unique(subjects)
+    per_epoch = len(ages) == len(subjects)
+    mapping = {}
+    for index, subject in enumerate(unique):
+        values = ages[subjects == subject] if per_epoch else ages[index : index + 1]
+        values = values[~np.isnan(values)]
+        mapping[int(subject)] = float(values.mean()) if values.size else float("nan")
+    return mapping
+
+
+def _p_value(frame: pd.DataFrame, column: str) -> float:
+    younger = frame.loc[frame["group"] == "younger", column].to_numpy(dtype=float)
+    older = frame.loc[frame["group"] == "older", column].to_numpy(dtype=float)
+    if younger.size == 0 or older.size == 0:
+        return float("nan")
+    return float(mannwhitneyu(younger, older, alternative="two-sided").pvalue)
+
+
+def age_comparison(states, subjects, ages) -> dict:
+    """Split subjects at the median age and compare transition/dwell behaviour."""
+    frame = subject_metrics(states, subjects)
+    frame["age"] = frame["subject"].map(per_subject_ages(subjects, ages))
+    frame = frame.dropna(subset=["age"]).reset_index(drop=True)
+
+    summary = pd.DataFrame(columns=["group", "n", "transition_rate", "mean_dwell"])
+    if frame.empty:
+        return {
+            "subjects": frame,
+            "summary": summary,
+            "p_transition_rate": float("nan"),
+            "p_mean_dwell": float("nan"),
+        }
+
+    cutoff = frame["age"].median()
+    frame["group"] = np.where(frame["age"] <= cutoff, "younger", "older")
+    summary = (
+        frame.groupby("group")
+        .agg(
+            n=("subject", "size"),
+            transition_rate=("transition_rate", "median"),
+            mean_dwell=("mean_dwell", "median"),
+        )
+        .reset_index()
+    )
+    return {
+        "subjects": frame,
+        "summary": summary,
+        "p_transition_rate": _p_value(frame, "transition_rate"),
+        "p_mean_dwell": _p_value(frame, "mean_dwell"),
+    }
