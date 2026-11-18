@@ -107,6 +107,31 @@ class GaussianHMM:
         """Log likelihood of a sequence under the current parameters."""
         return self.forward(data)[1]
 
+    # -- Viterbi --------------------------------------------------------
+    def viterbi(self, data):
+        """Most likely state sequence and its joint log probability."""
+        log_emit = self.log_emission(data)
+        n_steps = log_emit.shape[0]
+        log_delta = np.empty_like(log_emit)
+        backpointer = np.zeros((n_steps, self.n_components), dtype=int)
+        log_trans = safe_log(self.transmat_)
+
+        log_delta[0] = safe_log(self.startprob_) + log_emit[0]
+        for step in range(1, n_steps):
+            candidates = log_delta[step - 1][:, None] + log_trans
+            backpointer[step] = candidates.argmax(axis=0)
+            log_delta[step] = log_emit[step] + candidates.max(axis=0)
+
+        path = np.empty(n_steps, dtype=int)
+        path[-1] = int(log_delta[-1].argmax())
+        for step in range(n_steps - 1, 0, -1):
+            path[step - 1] = backpointer[step, path[step]]
+        return path, float(log_delta[-1].max())
+
+    def predict(self, data) -> np.ndarray:
+        """Viterbi state sequence (the hypnogram we compare to experts)."""
+        return self.viterbi(data)[0]
+
     # -- posteriors -----------------------------------------------------
     def posterior(self, data):
         """Return (gamma, xi, log_likelihood) in probability space."""
